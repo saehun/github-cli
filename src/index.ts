@@ -1,12 +1,14 @@
 import execa from "execa";
 import program from "commander";
 import ora from "ora";
+import * as inquirer from "inquirer";
 import Octokit from "@octokit/rest";
 const chalk = require("chalk");
 const git = require("simple-git")();
 const version = require("../package.json").version;
 
 const repo = { origin: "", upstream: "", name: "" };
+let stdoutBuffer = "";
 
 const getRepo = async () => {
   return new Promise((resolve) => {
@@ -117,24 +119,180 @@ const makePullRequest = async (octokit: Octokit, repo: any, branch: string, titl
   }
 };
 
+const deleteBranch = async (octokit: Octokit, repo: any, branch: string) => {
+  const spinner = ora(`Delete [${chalk.yellow(repo.name)}] ${repo.origin}/${branch}`).start();
+  try {
+    const res = await octokit.git.deleteRef({
+      owner: repo.origin,
+      repo: repo.name,
+      ref: branch,
+    });
+    spinner.succeed();
+    return res.data;
+  } catch (e) {
+    console.log("Fail to delete repository", branch);
+    spinner.fail();
+  }
+};
 
-const yay = async () => {
+const findPullRequest = async (octokit: Octokit, branch: string, repo: any) => {
+  const res = await octokit.pulls.list({
+    owner: repo.upstream,
+    repo: repo.name
+  });
+
+  const pr = res.data.find((x) => x.head.ref === branch);
+
+  if (!pr) {
+    console.error(`Cannot find any pull request of [${repo.name}] ${repo.origin}/${branch} -> ${repo.upstream}/...`);
+    process.exit(1);
+  } else {
+    return pr;
+  }
+};
+
+const getPullRequestByNumber = async (octokit: Octokit, repo: any, number: number) => {
+  const res = await octokit.pulls.get({
+    owner: repo.upstream,
+    repo: repo.name,
+    pull_number: number,
+  });
+  return res.data;
+};
+
+const getStatus = async (octokit: Octokit, repo: any, ref: string) => {
+  const res = await octokit.repos.getCombinedStatusForRef({
+    owner: repo.upstream,
+    repo: repo.name,
+    ref,
+  });
+  return res.data;
+};
+
+const pollingUntilMergeable = async (octokit: Octokit, repo: any, number: number) => {
+  return new Promise((resolve) => {
+    const handle = setInterval(async () => {
+      const pr = await getPullRequestByNumber(octokit, repo, number);
+      console.log("- get mergeable status:", pr.mergeable);
+      if (pr.mergeable !== null) {
+        if (pr.mergeable === false) {
+          console.error("Cannot be merged. check\n", pr.html_url);
+          process.exit(1);
+        } else {
+          clearInterval(handle);
+          resolve(true);
+        }
+      }
+    }, 3000);
+  });
+};
+
+const printStatus = (statuses: any[]) => {
+  return statuses.map(({ context, state }: { context: string, state: "pending" | "success" | "failure" }) => {
+    return chalk[state === "pending" ? "yellow" : state === "success" ? "green" : "red"](context.replace(/ci\/circleci./, "").trim());
+  }).join(" ");
+};
+
+const pollingUntilCIPass = async (octokit: Octokit, repo: any, sha: string, link: string) => {
+  return new Promise((resolve) => {
+    const spinner = ora("[CircleCI]").start();
+    const handle = setInterval(async () => {
+      const data = await getStatus(octokit, repo, sha);
+      const state = data.state;
+      spinner.text = "[CircleCI] " + printStatus(data.statuses);
+      if (state !== "pending") {
+        if (state === "failure") {
+          spinner.fail();
+          console.error("CirclCI failed. check\n", link);
+          process.exit(1);
+        } else {
+          clearInterval(handle);
+          spinner.succeed();
+          resolve(true);
+        }
+      }
+    }, 3000);
+  });
+};
+
+const mergePullRequset = async (octokit: Octokit, repo: any, number: number, title: string,
+  method: "merge" | "squash" | "rebase" = "squash") => {
+  const res = await octokit.pulls.merge({
+    owner: repo.upstream,
+    repo: repo.name,
+    pull_number: number,
+    commit_title: title,
+    merge_method: method,
+  });
+
+  return res.data;
+};
+
+const getJiraTodos = async () => {
+  const res = await execa("jira", ["ls", "todo", "karl"]);
+  stdoutBuffer = res.stdout;
+  return;
+}
+
+
+const yo = async () => {
   const branch = await getCurrentBranchName();
+  const repo = await getRepo();
   const issueTitle = await getJiraIssue(branch);
+  const octokit = initializeGit();
 
   await pushOrigin(branch);
 
-  const octokit = initializeGit();
-  const repo = await getRepo();
-
   const result = await makePullRequest(octokit, repo, branch, issueTitle);
+
   console.log(result.html_url);
   console.log(result.url);
 };
 
-const push = async () => {
-  const current = await getCurrentBranchName();
-  await pushOrigin(current);
+const ho = async (command: any) => {
+  const branch = typeof command === "string" ? command : await getCurrentBranchName();
+  const repo = await getRepo();
+  const octokit = initializeGit();
+  const pr = await findPullRequest(octokit, branch, repo);
+  await pollingUntilMergeable(octokit, repo, pr.number);
+  await pollingUntilCIPass(octokit, repo, pr.head.sha, pr.html_url);
+};
+
+const hou = async (command: any) => {
+  const branch = typeof command === "string" ? command : await getCurrentBranchName();
+  const repo = await getRepo();
+  const octokit = initializeGit();
+  const pr = await findPullRequest(octokit, branch, repo);
+  await mergePullRequset(octokit, repo, pr.number, pr.title);
+
+  console.log(`Branch ${chalk.yellow(branch)} is successfully merged! Yohohou!`);
+  inquirer.prompt({
+    type: "confirm",
+    message: `Delete JIRA issue and git branch ?`,
+    name: "yes"
+  }).then(async ({ yes }: any) => {
+    if (yes) {
+      const spinner = ora("Delete jira issue of id " + chalk.yellow(branch)).start();
+      const result = await execa("jira", ["show", "-s", branch]);
+      if (result.failed || result.exitCode !== 0) {
+        spinner.fail();
+        console.log("Cannot delete jira issue of id:", chalk.yellow(branch));
+        process.exit(3);
+      } else {
+        spinner.succeed();
+        await Promise.all([
+          execa("gitreturn"),
+          deleteBranch(octokit, repo, branch),
+          getJiraTodos(),
+        ]);
+        console.log(stdoutBuffer);
+        console.log("Take a rest..");
+        process.exit(0);
+      }
+    } else {
+      console.log("Take a rest..");
+    }
+  });
 };
 
 /**
@@ -142,14 +300,19 @@ const push = async () => {
  */
 program
   .version(version, "-v, --version")
-  .command("yay")
-  .description("Yay!")
-  .action(yay);
+  .command("yo")
+  .description("Yo!, create pull request")
+  .action(yo);
 
 program
-  .command("push")
-  .description("list issues")
-  .action(push);
+  .command("ho")
+  .description("Ho!, wait pull request mergeable")
+  .action(ho);
+
+program
+  .command("hou")
+  .description("Hou!, merge!")
+  .action(hou);
 
 program.on("--help", function() {
   console.log("Examples:");
