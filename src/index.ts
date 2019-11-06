@@ -239,7 +239,7 @@ const getJiraTodos = async () => {
 const clearAll = async (octokit: Octokit, branch: string, issueTitle: string) => {
 
   const spinner = ora("Delete jira issue of id " + chalk.yellow(branch)).start();
-  const result = await execa("jira", ["rm", branch, "-y"]);
+  const result = await execa("jira", ["done", branch]);
   if (result.failed || result.exitCode !== 0) {
     spinner.fail();
     console.log("Cannot delete jira issue of id:", chalk.yellow(branch));
