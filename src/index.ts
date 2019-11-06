@@ -3,6 +3,7 @@ import program from "commander";
 import ora from "ora";
 import Octokit from "@octokit/rest";
 import fetch from "node-fetch";
+import { PullRequestResponse } from "./types";
 const chalk = require("chalk");
 const git = require("simple-git")();
 const version = require("../package.json").version;
@@ -36,8 +37,7 @@ const getRepo = async () => {
   });
 };
 
-const initializeGit = async () => {
-  await getRepo();
+const initializeGit = () => {
   const octokit = new Octokit({
     auth: process.env.GITHUB_ACCESS_TOKEN,
     userAgent: `github-cli v${version}`,
@@ -91,6 +91,7 @@ const getJiraIssue = async (key: string) => {
   const result = await execa("jira", ["show", "-s", key]);
   if (result.failed || result.exitCode !== 0) {
     spinner.fail();
+    console.log("Cannot find jira issue of id:", chalk.yellow(key));
     process.exit(3);
   } else {
     spinner.succeed();
@@ -99,25 +100,37 @@ const getJiraIssue = async (key: string) => {
   }
 };
 
-const makePullRequest = async () => {
-  const octokit = await initializeGit();
-  const res = await octokit.pulls.create({
-    owner: repo.upstream,
-    repo: repo.name,
-    title: "hmmmmmmmmmmmmmm",
-    head: "minidonut:3823",
-    base: "master"
-  });
-  console.log(res);
+const makePullRequest = async (octokit: Octokit, repo: any, branch: string, title: string, base = "dev") => {
+  const spinner = ora(`Generate pull request of [${chalk.yello(repo.name)}] ${repo.origin}/${branch} -> ${repo.upstream}/${base}`).start();
+  try {
+    const res = await octokit.pulls.create({
+      owner: repo.upstream,
+      repo: repo.name,
+      title: `[${branch}] ${title}`,
+      head: `${repo.origin}:${branch}`,
+      base,
+    });
+    spinner.succeed();
+    return res.data;
+  } catch (e) {
+    console.log("Cannot make pull request", e);
+    spinner.fail();
+    process.exit(1);
+  }
 };
 
 
-const list = async (...args: any) => {
-  /* const current = await getCurrentBranchName(); */
-  /* await getJiraIssue(current); */
-  /* console.log(await getRepo()); */
-  /* initializeGit(); */
-  makePullRequest();
+const yay = async () => {
+  const branch = await getCurrentBranchName();
+  const issueTitle = await getJiraIssue(branch);
+
+  await pushOrigin(branch);
+
+  const octokit = initializeGit();
+  const repo = await getRepo();
+
+  const result = await makePullRequest(octokit, repo, branch, issueTitle);
+  console.log(result.html_url);
 };
 
 const push = async () => {
@@ -130,9 +143,9 @@ const push = async () => {
  */
 program
   .version(version, "-v, --version")
-  .command("ls")
-  .description("list issues")
-  .action(list);
+  .command("yay")
+  .description("Yay!")
+  .action(yay);
 
 program
   .command("push")
