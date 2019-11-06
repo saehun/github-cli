@@ -2,10 +2,12 @@ import execa from "execa";
 import program from "commander";
 import ora from "ora";
 import * as inquirer from "inquirer";
+import { notify, on } from "node-notifier";
 import Octokit from "@octokit/rest";
 const chalk = require("chalk");
 const git = require("simple-git")();
 const version = require("../package.json").version;
+
 
 const repo = { origin: "", upstream: "", name: "" };
 let stdoutBuffer = "";
@@ -130,8 +132,8 @@ const deleteBranch = async (octokit: Octokit, repo: any, branch: string) => {
     spinner.succeed();
     return res.data;
   } catch (e) {
-    console.log("Fail to delete repository", branch);
     spinner.fail();
+    console.log("Fail to delete branch", branch);
   }
 };
 
@@ -232,7 +234,37 @@ const getJiraTodos = async () => {
   const res = await execa("jira", ["ls", "todo", "karl"]);
   stdoutBuffer = res.stdout;
   return;
-}
+};
+
+const clearAll = async (octokit: Octokit, branch: string, issueTitle: string) => {
+
+  const spinner = ora("Delete jira issue of id " + chalk.yellow(branch)).start();
+  const result = await execa("jira", ["rm", branch, "-y"]);
+  if (result.failed || result.exitCode !== 0) {
+    spinner.fail();
+    console.log("Cannot delete jira issue of id:", chalk.yellow(branch));
+    process.exit(3);
+  } else {
+    spinner.succeed();
+    await Promise.all([
+      execa("gitreturn"),
+      deleteBranch(octokit, repo, "heads/" + branch),
+      getJiraTodos(),
+    ]);
+    console.log(stdoutBuffer);
+    console.log("Take a rest..");
+
+    notify({
+      title: `Hou!!! All compeletee`,
+      message: `[${branch}] ${issueTitle}`,
+      sound: true,
+      wait: true,
+      timeout: 10,
+    });
+    process.exit(0);
+  }
+
+};
 
 
 const yo = async () => {
@@ -247,6 +279,16 @@ const yo = async () => {
 
   console.log(result.html_url);
   console.log(result.url);
+
+  notify({
+    title: `Yo, PullRequest created`,
+    message: `[${branch}] ${issueTitle}`,
+    sound: true,
+    wait: true,
+    timeout: 10,
+  });
+
+  return branch;
 };
 
 const ho = async (command: any) => {
@@ -256,43 +298,41 @@ const ho = async (command: any) => {
   const pr = await findPullRequest(octokit, branch, repo);
   await pollingUntilMergeable(octokit, repo, pr.number);
   await pollingUntilCIPass(octokit, repo, pr.head.sha, pr.html_url);
+
+  notify({
+    title: `Ho! All check is passed. you can merge now`,
+    message: `[${branch}] ${pr.title}`,
+    sound: true,
+    wait: true,
+    timeout: 10,
+  });
 };
 
 const hou = async (command: any) => {
-  const branch = typeof command === "string" ? command : await getCurrentBranchName();
+  const branch = await getCurrentBranchName();
+  const ask = typeof command !== "string";
+
   const repo = await getRepo();
   const octokit = initializeGit();
   const pr = await findPullRequest(octokit, branch, repo);
   await mergePullRequset(octokit, repo, pr.number, pr.title);
 
   console.log(`Branch ${chalk.yellow(branch)} is successfully merged! Yohohou!`);
-  inquirer.prompt({
-    type: "confirm",
-    message: `Delete JIRA issue and git branch ?`,
-    name: "yes"
-  }).then(async ({ yes }: any) => {
-    if (yes) {
-      const spinner = ora("Delete jira issue of id " + chalk.yellow(branch)).start();
-      const result = await execa("jira", ["show", "-s", branch]);
-      if (result.failed || result.exitCode !== 0) {
-        spinner.fail();
-        console.log("Cannot delete jira issue of id:", chalk.yellow(branch));
-        process.exit(3);
+  if (ask) {
+    inquirer.prompt({
+      type: "confirm",
+      message: `Delete JIRA issue and git branch ?`,
+      name: "yes"
+    }).then(async ({ yes }: any) => {
+      if (yes) {
+        clearAll(octokit, branch, pr.title);
       } else {
-        spinner.succeed();
-        await Promise.all([
-          execa("gitreturn"),
-          deleteBranch(octokit, repo, branch),
-          getJiraTodos(),
-        ]);
-        console.log(stdoutBuffer);
         console.log("Take a rest..");
-        process.exit(0);
       }
-    } else {
-      console.log("Take a rest..");
-    }
-  });
+    });
+  } else {
+    clearAll(octokit, branch, pr.title);
+  }
 };
 
 /**
@@ -313,6 +353,15 @@ program
   .command("hou")
   .description("Hou!, merge!")
   .action(hou);
+
+program
+  .command("yohohou")
+  .description("Yo, Ho! Hou!!, create, merge, delete")
+  .action(async () => {
+    const branch = await yo();
+    await ho(branch);
+    await hou(branch);
+  });
 
 program.on("--help", function() {
   console.log("Examples:");
