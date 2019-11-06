@@ -1,5 +1,7 @@
 import * as execa from "execa";
 import * as program from "commander";
+import ora from "ora";
+const chalk = require("chalk");
 const git = require("simple-git")();
 const version = require("../package.json").version;
 
@@ -12,9 +14,11 @@ const getCurrentBranchName = async () => {
 };
 
 const pushOrigin = async (branchName: string) => {
+  const spinner = ora("git push origin" + chalk.cyan(branchName)).start();
   return new Promise((resolve, reject) => {
     git.push(["origin", branchName], (err: any, result: any) => {
       console.log(result);
+      spinner.stop();
       if (err) reject(err); resolve(result);
     });
   });
