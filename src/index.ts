@@ -2,8 +2,6 @@ import execa from "execa";
 import program from "commander";
 import ora from "ora";
 import Octokit from "@octokit/rest";
-import fetch from "node-fetch";
-import { PullRequestResponse } from "./types";
 const chalk = require("chalk");
 const git = require("simple-git")();
 const version = require("../package.json").version;
@@ -101,7 +99,7 @@ const getJiraIssue = async (key: string) => {
 };
 
 const makePullRequest = async (octokit: Octokit, repo: any, branch: string, title: string, base = "dev") => {
-  const spinner = ora(`Generate pull request of [${chalk.yello(repo.name)}] ${repo.origin}/${branch} -> ${repo.upstream}/${base}`).start();
+  const spinner = ora(`Generate pull request of [${chalk.yellow(repo.name)}] ${repo.origin}/${branch} -> ${repo.upstream}/${base}`).start();
   try {
     const res = await octokit.pulls.create({
       owner: repo.upstream,
@@ -131,6 +129,7 @@ const yay = async () => {
 
   const result = await makePullRequest(octokit, repo, branch, issueTitle);
   console.log(result.html_url);
+  console.log(result.url);
 };
 
 const push = async () => {
