@@ -39,6 +39,25 @@ const getRepo = async () => {
   });
 };
 
+const gitCleanBranch = ({ to, from, remote }: { to: "dev" | "master", from: string, remote: "upstream" | "origin" }) => {
+  return new Promise((resolve, reject) => {
+    git.checkout(to, (err: any) => {
+      if (err) reject(`Cannot checkout to branch ${to}`);
+      git.pull(remote, to, async (err: any) => {
+        if (err) reject(`Cannot pull from ${remote}/${to}`);
+        const result = await execa("git", ["branch", "-D", from]);
+        if (result.failed || result.exitCode !== 0) {
+          console.log("Cannot delete branch", chalk.yellow(from));
+          process.exit(3);
+        } else {
+          console.log(`Branch ${from} is deleted`);
+          resolve(true);
+        }
+      });
+    });
+  });
+};
+
 const initializeGit = () => {
   const octokit = new Octokit({
     auth: process.env.GITHUB_ACCESS_TOKEN,
@@ -247,7 +266,7 @@ const clearAll = async (octokit: Octokit, branch: string, issueTitle: string) =>
   } else {
     spinner.succeed();
     await Promise.all([
-      execa("gitreturn"),
+      gitCleanBranch({ to: "dev", from: branch, remote: "upstream" }),
       deleteBranch(octokit, repo, "heads/" + branch),
       getJiraTodos(),
     ]);
