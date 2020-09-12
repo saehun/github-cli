@@ -32,7 +32,7 @@
     "date-fns": "^2.15.0",
     "execa": "^4.0.3",
     "inquirer": "^7.3.3",
-    "node-fetch": "^2.6.0",
+    "node-fetch": "^2.6.1",
     "node-notifier": "^7.0.2",
     "ora": "^5.0.0",
     "ramda": "^0.27.1",
