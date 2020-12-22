@@ -33,7 +33,7 @@
     "execa": "^4.0.3",
     "inquirer": "^7.3.3",
     "node-fetch": "^2.6.0",
-    "node-notifier": "^7.0.2",
+    "node-notifier": "^8.0.1",
     "ora": "^5.0.0",
     "ramda": "^0.27.1",
     "simple-git": "^2.17.0",
